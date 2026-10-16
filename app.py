@@ -14,6 +14,7 @@ from features.audio_app import main as audio_transcription_page
 from features.trans_to import main as translation_page
 from features.yt import main as youtube_analyzer_page
 from features.conv import main as conversation_analysis_page 
+from features.yt import main as youtube_analyzer
 from features.word_analogy import main as word_analogy_page 
 from features.lang import main as language_learner_page
 import time
@@ -26,6 +27,12 @@ def local_css():
         [data-testid="stAppViewContainer"] {
             background-color: #f8f8f8;
             font-family: 'Amazon Ember', Arial, sans-serif;
+            color: #111;
+        }
+
+        /* Ensure Streamlit text remains readable even if other pages change backgrounds */
+        .stMarkdown, .stText, .stSubheader, .stHeader, .stLabel {
+            color: #111;
         }
         
         /* Header and Navigation Bar */
@@ -226,7 +233,8 @@ def local_css():
         
         /* Hide Streamlit default elements */
         #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
+        /* Avoid affecting other text rendering */
+        /* footer visibility handled separately; do not hide globally */
         .stDeployButton {display:none;}
         
         /* Responsive adjustments */
@@ -409,10 +417,10 @@ def footer_section():
     st.markdown("""
     <div class="footer">
         <div style="margin-bottom: 15px;">
-            <a href="https://www.linkedin.com/in/mayank-joshi5252" style="margin: 0 10px;">About Us</a>
-            <a href="https://www.github.com/mayank-joshi525" style="margin: 0 10px;">Contact Us</a>
+            <a href="#" style="margin: 0 10px;" onclick="event.preventDefault();">About Us</a>
+            <a href="#" style="margin: 0 10px;" onclick="event.preventDefault();">Contact Us</a>
         </div>
-        <p>© 2025 Voice Vision. All rights reserved.</p>
+<p>© 2026 Voice Vision. All rights reserved.</p>
     </div>
     """, unsafe_allow_html=True)
 

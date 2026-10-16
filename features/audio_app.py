@@ -1,32 +1,79 @@
 import streamlit as st
 import whisper
-from io import BytesIO # Downloading of Files
-import os # local file operation
-import numpy as np # array operations
-import librosa # audio analysis and visualisation
-import librosa.display # number of speaker count
-import time # libraray related to time
-import re # regular expression
-from pydub import AudioSegment # audio manipulation 
-import matplotlib.pyplot as plt #charts and graphs
-import pandas as pd # high extensive calculations which can not be performed in array
-from sklearn.cluster import KMeans # speaker identification
-import tempfile # for creation of temp files
-import json # js data realated
+from io import BytesIO
+import os
+import numpy as np
+import librosa
+import librosa.display
+import time
+import re
+from pydub import AudioSegment
+import matplotlib.pyplot as plt
+import pandas as pd
+from sklearn.cluster import KMeans
+import tempfile
+import json
+import soundfile as sf
 
 
-def main():  # Added this wrapper function for integration
-    # Set page config first
-    
+def main():
+    # Add custom CSS to ensure text visibility
+    st.markdown("""
+    <style>
+        .stApp {
+            background-color: #f8f8f8;
+        }
+        .stMarkdown, .stText, .stSubheader, .stHeader, .stLabel, p, div, span {
+            color: #111111 !important;
+        }
+        h1, h2, h3, h4, h5, h6 {
+            color: #232f3e !important;
+        }
+        .header {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #232f3e !important;
+            margin-bottom: 1.5rem;
+        }
+        .stTextArea textarea {
+            color: #111111 !important;
+            background-color: #ffffff !important;
+        }
+        .stButton button {
+            background-color: #FFD814;
+            color: #111111;
+            font-weight: 500;
+        }
+        .stButton button:hover {
+            background-color: #F7CA00;
+        }
+        .upload-box {
+            background-color: #e7f3ff;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            border-left: 4px solid #2196f3;
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
     # Load Whisper model once
-    @st.cache_resource # for storingn cache
-    def load_model():
-        return whisper.load_model("base") 
+    @st.cache_resource
+    def load_model(model_size="tiny"):
+        """Load Whisper model with size parameter"""
+        return whisper.load_model(model_size)
 
-    model = load_model()
+    # Model selector
+    model_options = ["tiny", "base", "auto"]
+    selected_model = st.selectbox(
+        "Whisper Model (tiny recommended for low memory)",
+        model_options,
+        index=0,
+        help="tiny: Fast/Low memory, base: Better accuracy/higher memory"
+    )
+    model = load_model(selected_model)
 
-    # Language code to name mapping
+    # Language mapping
     lang_map = {
         "en": "English", "hi": "Hindi", "fr": "French", "de": "German",
         "es": "Spanish", "it": "Italian", "zh": "Chinese", "ja": "Japanese",
@@ -34,79 +81,89 @@ def main():  # Added this wrapper function for integration
         "ta": "Tamil", "bn": "Bengali", "pa": "Punjabi", "gu": "Gujarati", "kn": "Kannada"
     }
 
-    #encoder working for audio transcription
-    def transcribe_audio(audio_file):
+    def transcribe_audio(audio_bytes):
         """Transcribe audio using Whisper"""
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-            temp_path = temp_file.name
-            audio_bytes = audio_file.read()
-            temp_file.write(audio_bytes)
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                temp_path = temp_file.name
+                temp_file.write(audio_bytes)
             
-        # wav creation is need because wav is getting better results
-        result = model.transcribe(temp_path)
-        lang_code = result['language']
-        lang_name = lang_map.get(lang_code, lang_code)
-        
-        # at the end it removess wav file
-        os.remove(temp_path)
-        return result["text"], lang_name, result["segments"]
+            result = model.transcribe(temp_path)
+            lang_code = result['language']
+            lang_name = lang_map.get(lang_code, lang_code)
+            
+            os.unlink(temp_path)
+            
+            return result["text"], lang_name, result["segments"]
+        except Exception as e:
+            raise RuntimeError(f"Transcription failed: {str(e)}")
 
-#Gender Analysis by Pitch
-    
-    def analyze_gender(audio_path):
+    def analyze_gender(audio_bytes):
         """Analyze audio to predict speaker gender"""
-        y, sr = librosa.load(audio_path, sr=None)
-        pitches, magnitudes = librosa.piptrack(y=y, sr=sr)
-        pitch_values = pitches[magnitudes > 0]
-        
-        #we are identifying pitch of the gender 
-        if len(pitch_values) == 0:
-            return "Unknown"
-        
-        mean_pitch = np.mean(pitch_values)
-        if mean_pitch < 165:
-            return "Male"
-        elif mean_pitch > 180:
-            return "Female"
-        else:
-            return "Undetermined"
-
-    #couunting number of speaker, librosa if identifying pitch, we are making K means algorithm, pitch in each second and then apply K means and make 
-    # a cluster of them
-    def count_speakers(audio_path, segments):
-        """Count number of unique speakers"""
-        y, sr = librosa.load(audio_path, sr=None)
-        features = []
-        
-        for segment in segments:
-            start_sample = int(segment['start'] * sr)
-            end_sample = int(segment['end'] * sr)
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                temp_path = temp_file.name
+                temp_file.write(audio_bytes)
             
-            if start_sample < end_sample and end_sample <= len(y):
-                segment_audio = y[start_sample:end_sample]
-                if len(segment_audio) > 512:
-                    mfccs = librosa.feature.mfcc(y=segment_audio, sr=sr, n_mfcc=13)
-                    mfccs_mean = np.mean(mfccs, axis=1)
-                    features.append(mfccs_mean)
-        
-        if len(features) < 2:
-            return 1
-        
-        features = np.array(features)
-        max_speakers = min(8, len(features))
-        best_score = -1
-        num_speakers = 1
-        
-        for n_clusters in range(1, max_speakers + 1):
-            if len(features) >= n_clusters:
-                kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init=10).fit(features)
-                score = -kmeans.inertia_
+            y, sr = librosa.load(temp_path, sr=None)
+            pitches, magnitudes = librosa.piptrack(y=y, sr=sr)
+            pitch_values = pitches[magnitudes > 0]
+            
+            os.unlink(temp_path)
+            
+            if len(pitch_values) == 0:
+                return "Unknown"
+            
+            mean_pitch = np.mean(pitch_values)
+            if mean_pitch < 165:
+                return "Male"
+            elif mean_pitch > 180:
+                return "Female"
+            else:
+                return "Undetermined"
+        except:
+            return "Unknown"
+
+    def count_speakers(audio_bytes, segments):
+        """Count number of unique speakers"""
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                temp_path = temp_file.name
+                temp_file.write(audio_bytes)
+            
+            y, sr = librosa.load(temp_path, sr=None)
+            features = []
+            
+            for segment in segments[:10]:
+                start_sample = int(segment['start'] * sr)
+                end_sample = int(segment['end'] * sr)
                 
-                if n_clusters == 1 or score > best_score * 0.7:
-                    best_score = score
-                    num_speakers = n_clusters
-        
-        return num_speakers
+                if start_sample < end_sample and end_sample <= len(y):
+                    segment_audio = y[start_sample:end_sample]
+                    if len(segment_audio) > 512:
+                        mfccs = librosa.feature.mfcc(y=segment_audio, sr=sr, n_mfcc=13)
+                        mfccs_mean = np.mean(mfccs, axis=1)
+                        features.append(mfccs_mean)
+            
+            os.unlink(temp_path)
+            
+            if len(features) < 2:
+                return 1
+            
+            features = np.array(features)
+            max_speakers = min(4, len(features))
+            num_speakers = 1
+            
+            for n_clusters in range(2, max_speakers + 1):
+                if len(features) >= n_clusters:
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=0, n_init=10)
+                    kmeans.fit(features)
+                    if kmeans.inertia_ < 100:
+                        num_speakers = n_clusters
+            
+            return num_speakers
+        except:
+            return 1
 
     def format_time(seconds):
         """Format seconds to MM:SS format"""
@@ -124,19 +181,28 @@ def main():  # Added this wrapper function for integration
             transcript += f"[{start_time} - {end_time}] {text}\n\n"
         return transcript
 
-    def generate_audio_visualization(audio_path):
+    def generate_audio_visualization(audio_bytes):
         """Generate waveform and spectrogram visualization"""
-        y, sr = librosa.load(audio_path, sr=None)
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
-        librosa.display.waveshow(y, sr=sr, ax=ax1)
-        ax1.set_title('Waveform')
-        ax1.set_xlabel('')
-        D = librosa.amplitude_to_db(np.abs(librosa.stft(y)), ref=np.max)
-        img = librosa.display.specshow(D, y_axis='log', x_axis='time', sr=sr, ax=ax2)
-        ax2.set_title('Spectrogram')
-        fig.colorbar(img, ax=ax2, format="%+2.0f dB")
-        plt.tight_layout()
-        return fig
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                temp_path = temp_file.name
+                temp_file.write(audio_bytes)
+            
+            y, sr = librosa.load(temp_path, sr=None)
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
+            librosa.display.waveshow(y, sr=sr, ax=ax1)
+            ax1.set_title('Waveform')
+            ax1.set_xlabel('')
+            D = librosa.amplitude_to_db(np.abs(librosa.stft(y)), ref=np.max)
+            img = librosa.display.specshow(D, y_axis='log', x_axis='time', sr=sr, ax=ax2)
+            ax2.set_title('Spectrogram')
+            fig.colorbar(img, ax=ax2, format="%+2.0f dB")
+            plt.tight_layout()
+            
+            os.unlink(temp_path)
+            return fig
+        except:
+            return None
 
     def calculate_speech_stats(segments):
         """Calculate speech statistics"""
@@ -158,247 +224,272 @@ def main():  # Added this wrapper function for integration
     def extract_keywords(text, num_keywords=5):
         """Extract simple keywords"""
         from collections import Counter
-        stop_words = {'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you'}
+        stop_words = {'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 
+                      'he', 'she', 'it', 'they', 'them', 'the', 'a', 'an', 'and', 'or', 'to', 'of'}
         text = text.lower()
         words = re.findall(r'\b\w+\b', text)
         filtered_words = [word for word in words if word not in stop_words and len(word) > 3]
         word_counts = Counter(filtered_words)
         return word_counts.most_common(num_keywords)
 
-    """Main function to run the Streamlit app"""
-    st.markdown("""
-    <style>
-        .header {
-            font-size: 2.5rem;
-            font-weight: 700;
-            color: #4361ee;
-            margin-bottom: 1.5rem;
-        }
-        .metric-box {
-            background: #f8f9fa;
-            border-radius: 10px;
-            padding: 1rem;
-            margin-bottom: 1rem;
-        }
-        .metric-title {
-            font-size: 0.9rem;
-            color: #6c757d;
-            margin-bottom: 0.3rem;
-        }
-        .metric-value {
-            font-size: 1.4rem;
-            font-weight: 600;
-            color: #212529;
-        }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    st.markdown('<div class="header">Audio Transcription</div>', unsafe_allow_html=True)
+    # Initialize session state
+    if 'uploaded_audio' not in st.session_state:
+        st.session_state.uploaded_audio = None
+    if 'uploaded_filename' not in st.session_state:
+        st.session_state.uploaded_filename = None
+    if 'transcription_done' not in st.session_state:
+        st.session_state.transcription_done = False
+    if 'transcription_text' not in st.session_state:
+        st.session_state.transcription_text = ""
+    if 'language' not in st.session_state:
+        st.session_state.language = ""
+    if 'segments' not in st.session_state:
+        st.session_state.segments = []
+    if 'analysis_results' not in st.session_state:
+        st.session_state.analysis_results = {}
+    if 'speech_stats' not in st.session_state:
+        st.session_state.speech_stats = {}
+    if 'keywords' not in st.session_state:
+        st.session_state.keywords = []
+    if 'timestamped_transcript' not in st.session_state:
+        st.session_state.timestamped_transcript = ""
+    if 'visualization' not in st.session_state:
+        st.session_state.visualization = None
+    if 'processing_time' not in st.session_state:
+        st.session_state.processing_time = 0
+
+    # Main UI
+    st.markdown('<div class="header">🎙️ Audio Transcription</div>', unsafe_allow_html=True)
     
     # Create columns for layout
-    col1, col2 = st.columns([3, 1])  # Adjust ratio as needed
+    col1, col2 = st.columns([3, 1])
 
     with col1:
-        # Initialize session state
-        if 'transcribed' not in st.session_state:
-            st.session_state.transcribed = False
-            st.session_state.show_results = False
+        # Upload Section - Step 1 (Now the only step)
+        st.subheader("📁 Step 1: Upload Audio File")
         
-        # File uploader
+        # File uploader for audio files
         uploaded_file = st.file_uploader(
-            "Upload audio file (mp3, wav, m4a)", 
+            "Choose an audio file (MP3, WAV, M4A)",
             type=["mp3", "wav", "m4a"],
-            accept_multiple_files=False
+            accept_multiple_files=False,
+            help="200MB per file • MP3, WAV, M4A"
         )
         
-        if uploaded_file:
-            # Save uploaded file temporarily
-            with tempfile.NamedTemporaryFile(suffix="." + uploaded_file.name.split(".")[-1], delete=False) as temp_file:
-                temp_path = temp_file.name
-                audio_bytes = uploaded_file.getvalue()
-                temp_file.write(audio_bytes)
+        if uploaded_file is not None:
+            audio_bytes = uploaded_file.read()
+            st.audio(audio_bytes, format="audio/mp3")
+            st.caption(f"File name: {uploaded_file.name}")
+            st.caption(f"File size: {len(audio_bytes) / 1024:.1f} KB")
             
-            st.session_state.temp_audio_path = temp_path
-            st.audio(uploaded_file, format="audio/mp3")
+            if st.button("✅ Use this file for transcription", type="primary", use_container_width=True):
+                st.session_state.uploaded_audio = audio_bytes
+                st.session_state.uploaded_filename = uploaded_file.name
+                st.success(f"✅ File loaded: {uploaded_file.name}")
+                st.rerun()
+        
+        # Show current selection
+        if st.session_state.uploaded_audio:
+            st.markdown("---")
+            st.markdown("### 🎵 Current Audio Ready for Transcription")
+            st.audio(st.session_state.uploaded_audio, format="audio/wav")
+            st.info(f"**Selected file:** {st.session_state.uploaded_filename}")
             
-            # Advanced options
-            with st.expander("Analysis Options"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    enable_speaker_detection = st.checkbox("Detect number of speakers", value=False)
-                    enable_gender_detection = st.checkbox("Detect speaker gender", value=False)
-                with col2:
-                    enable_visualization = st.checkbox("Generate audio visualization", value=False)
-                    enable_keywords = st.checkbox("Extract keywords", value=False)
+            col_download, col_clear_all = st.columns(2)
             
-            # Transcription button
-            if st.button("Transcribe Audio", type="primary"):
-                with st.spinner("Transcribing audio..."):
-                    start_time = time.time()
-                    text, lang, segments = transcribe_audio(uploaded_file)
-                    st.session_state.transcription = text
-                    st.session_state.language = lang
-                    st.session_state.segments = segments
-                    
-                    # Initialize empty results for optional features
-                    analysis_results = {}
-                    speech_stats = {}
-                    keywords = []
-                    visualization = None
-                    
-                    # Only perform selected analyses
-                    if enable_speaker_detection:
-                        try:
-                            num_speakers = count_speakers(temp_path, segments)
-                            analysis_results["Number of Speakers"] = num_speakers
-                        except Exception as e:
-                            st.warning(f"Could not detect number of speakers: {e}")
-                            analysis_results["Number of Speakers"] = "Detection failed"
-                    
-                    if enable_gender_detection:
-                        try:
-                            gender = analyze_gender(temp_path)
-                            analysis_results["Dominant Speaker Gender"] = gender
-                        except Exception as e:
-                            st.warning(f"Could not detect gender: {e}")
-                            analysis_results["Dominant Speaker Gender"] = "Detection failed"
-                    
-                    if enable_speaker_detection or enable_gender_detection:
-                        speech_stats = calculate_speech_stats(segments)
-                    
-                    if enable_keywords:
-                        keywords = extract_keywords(text)
-                    
-                    if enable_visualization:
-                        try:
-                            visualization = generate_audio_visualization(temp_path)
-                        except Exception as e:
-                            st.warning(f"Could not generate visualization: {e}")
-                    
-                    # Format transcript with timestamps
-                    timestamped_transcript = create_transcript_with_timestamps(segments)
-                    
-                    # Store results
-                    st.session_state.analysis_results = analysis_results
-                    st.session_state.speech_stats = speech_stats
-                    st.session_state.keywords = keywords
-                    st.session_state.timestamped_transcript = timestamped_transcript
-                    st.session_state.visualization = visualization
-                    st.session_state.processing_time = time.time() - start_time
-                    st.session_state.transcribed = True
-                    st.session_state.show_results = True
-                
-            # Show results if transcription is complete
-            if st.session_state.get('show_results'):
-                st.success(f"✅ Transcription Complete! (Processed in {st.session_state.processing_time:.2f} seconds)")
-                
-                # Display basic info
-                st.markdown(f"**🗣️ Detected Language:** {st.session_state.language}")
-                
-                # Display selected analysis results
-                if st.session_state.analysis_results:
-                    st.subheader("Audio Analysis")
-                    for key, value in st.session_state.analysis_results.items():
-                        st.markdown(f"**{key}:** {value}")
-                
-                if st.session_state.speech_stats:
-                    st.subheader("Speech Statistics")
-                    stats_df = pd.DataFrame({
-                        "Metric": list(st.session_state.speech_stats.keys()),
-                        "Value": list(st.session_state.speech_stats.values())
-                    })
-                    st.table(stats_df)
-                
-                if st.session_state.keywords:
-                    st.subheader("Key Topics")
-                    keywords_str = ", ".join([f"{word} ({count})" for word, count in st.session_state.keywords])
-                    st.markdown(f"**Keywords:** {keywords_str}")
-                
-                if st.session_state.visualization:
-                    st.subheader("Audio Visualization")
-                    st.pyplot(st.session_state.visualization)
-                
-                # Transcription tabs
-                tab1, tab2 = st.tabs(["Plain Text", "With Timestamps"])
-                
-                with tab1:
-                    # Create a unique key for the text area
-                    text_area_key = f"transcription_{time.time()}"
-                    st.text_area(
-                        "Transcribed Text", 
-                        st.session_state.transcription, 
-                        height=300,
-                        key=text_area_key
-                    )
-                    
-                    # Copy button that actually works
-                    if st.button("Copy Text", key="copy_text_btn"):
-                        st.session_state.copied_text = st.session_state.transcription
-                        st.success("Text copied to clipboard!")
-                    
-                    # Download button
-                    download_txt = BytesIO()
-                    download_txt.write(st.session_state.transcription.encode())
-                    download_txt.seek(0)
-                    st.download_button(
-                        "Download Text", 
-                        data=download_txt,
-                        file_name="transcription.txt",
-                        mime="text/plain"
-                    )
-                
-                with tab2:
-                    st.text_area(
-                        "Timestamped Transcript", 
-                        st.session_state.timestamped_transcript, 
-                        height=400,
-                        key="timestamped_area"
-                    )
-                    
-                    download_timestamped = BytesIO()
-                    download_timestamped.write(st.session_state.timestamped_transcript.encode())
-                    download_timestamped.seek(0)
-                    st.download_button(
-                        "Download Timestamped", 
-                        data=download_timestamped,
-                        file_name="timestamped_transcript.txt",
-                        mime="text/plain"
-                    )
-                    
-                    # JSON download
-                    json_data = {
-                        "language": st.session_state.language,
-                        "segments": st.session_state.segments,
-                        "analysis": st.session_state.analysis_results
-                    }
-                    json_str = json.dumps(json_data, indent=2)
-                    st.download_button(
-                        "Download JSON",
-                        data=json_str,
-                        file_name="transcription.json",
-                        mime="application/json"
-                    )
+            with col_download:
+                st.download_button(
+                    label="📥 Download Audio File",
+                    data=st.session_state.uploaded_audio,
+                    file_name=st.session_state.uploaded_filename,
+                    mime="audio/wav",
+                    use_container_width=True
+                )
+            
+            with col_clear_all:
+                if st.button("🗑️ Clear File", use_container_width=True):
+                    st.session_state.uploaded_audio = None
+                    st.session_state.uploaded_filename = None
+                    st.session_state.transcription_done = False
+                    st.rerun()
+        
+        # Advanced options
+        with st.expander("🔧 Analysis Options", expanded=False):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                enable_speaker_detection = st.checkbox("Detect number of speakers", value=False)
+                enable_gender_detection = st.checkbox("Detect speaker gender", value=False)
+            with col_b:
+                enable_visualization = st.checkbox("Generate audio visualization", value=False)
+                enable_keywords = st.checkbox("Extract keywords", value=True)
 
-        # Clean up temporary files
-        if st.session_state.get('temp_audio_path') and os.path.exists(st.session_state.temp_audio_path):
-            try:
-                os.unlink(st.session_state.temp_audio_path)
-            except:
-                pass
+        # Step 2: Transcribe Button
+        st.markdown("---")
+        st.subheader("🎤 Step 2: Transcribe Audio")
+        
+        if st.session_state.uploaded_audio:
+            if st.button("🎤 TRANSCRIBE AUDIO", type="primary", use_container_width=True):
+                with st.spinner("Transcribing audio... This may take a moment."):
+                    try:
+                        start_time = time.time()
+                        
+                        text, lang, segments = transcribe_audio(st.session_state.uploaded_audio)
+                        
+                        st.session_state.transcription_text = text
+                        st.session_state.language = lang
+                        st.session_state.segments = segments
+                        
+                        analysis_results = {}
+                        speech_stats = {}
+                        keywords = []
+                        visualization = None
+                        
+                        if enable_gender_detection:
+                            try:
+                                gender = analyze_gender(st.session_state.uploaded_audio)
+                                analysis_results["Dominant Speaker Gender"] = gender
+                            except Exception as e:
+                                st.warning(f"Could not detect gender: {e}")
+                        
+                        if enable_speaker_detection:
+                            try:
+                                num_speakers = count_speakers(st.session_state.uploaded_audio, segments)
+                                analysis_results["Number of Speakers"] = num_speakers
+                            except Exception as e:
+                                st.warning(f"Could not detect speakers: {e}")
+                        
+                        if enable_speaker_detection or enable_gender_detection:
+                            speech_stats = calculate_speech_stats(segments)
+                        
+                        if enable_keywords:
+                            keywords = extract_keywords(text)
+                        
+                        if enable_visualization:
+                            try:
+                                visualization = generate_audio_visualization(st.session_state.uploaded_audio)
+                            except Exception as e:
+                                st.warning(f"Could not generate visualization: {e}")
+                        
+                        timestamped_transcript = create_transcript_with_timestamps(segments)
+                        
+                        st.session_state.analysis_results = analysis_results
+                        st.session_state.speech_stats = speech_stats
+                        st.session_state.keywords = keywords
+                        st.session_state.timestamped_transcript = timestamped_transcript
+                        st.session_state.visualization = visualization
+                        st.session_state.processing_time = time.time() - start_time
+                        st.session_state.transcription_done = True
+                        
+                        st.success(f"✅ Transcription Complete! (Processed in {st.session_state.processing_time:.2f} seconds)")
+                        st.balloons()
+                        
+                    except Exception as e:
+                        st.error(f"❌ Transcription failed: {str(e)}")
+                        st.info("Tips: Try a different audio file, ensure clear speech, or use a shorter clip.")
+        else:
+            st.info("📌 Please upload an audio file first, then click 'Transcribe Audio'")
+
+        # Show results
+        if st.session_state.transcription_done:
+            st.markdown("---")
+            st.markdown(f"**🗣️ Detected Language:** {st.session_state.language}")
+            
+            if st.session_state.analysis_results:
+                st.subheader("📊 Audio Analysis")
+                for key, value in st.session_state.analysis_results.items():
+                    st.markdown(f"**{key}:** {value}")
+            
+            if st.session_state.speech_stats:
+                st.subheader("📈 Speech Statistics")
+                stats_df = pd.DataFrame({
+                    "Metric": list(st.session_state.speech_stats.keys()),
+                    "Value": list(st.session_state.speech_stats.values())
+                })
+                st.table(stats_df)
+            
+            if st.session_state.keywords:
+                st.subheader("🔑 Key Topics")
+                keywords_str = ", ".join([f"**{word}** ({count})" for word, count in st.session_state.keywords])
+                st.markdown(keywords_str)
+            
+            if st.session_state.visualization:
+                st.subheader("📊 Audio Visualization")
+                st.pyplot(st.session_state.visualization)
+            
+            tab1, tab2 = st.tabs(["Plain Text", "With Timestamps"])
+            
+            with tab1:
+                st.text_area("Transcribed Text", st.session_state.transcription_text, height=300)
+                
+                download_txt = BytesIO()
+                download_txt.write(st.session_state.transcription_text.encode())
+                download_txt.seek(0)
+                st.download_button(
+                    "📥 Download Text",
+                    data=download_txt,
+                    file_name="transcription.txt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
+            
+            with tab2:
+                st.text_area("Timestamped Transcript", st.session_state.timestamped_transcript, height=400)
+                
+                download_timestamped = BytesIO()
+                download_timestamped.write(st.session_state.timestamped_transcript.encode())
+                download_timestamped.seek(0)
+                st.download_button(
+                    "📥 Download Timestamped",
+                    data=download_timestamped,
+                    file_name="timestamped_transcript.txt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
+                
+                json_data = {
+                    "language": st.session_state.language,
+                    "segments": st.session_state.segments,
+                    "analysis": st.session_state.analysis_results
+                }
+                json_str = json.dumps(json_data, indent=2)
+                st.download_button(
+                    "📥 Download JSON",
+                    data=json_str,
+                    file_name="transcription.json",
+                    mime="application/json",
+                    use_container_width=True
+                )
 
     with col2:
         st.markdown("""
-      
-            
-        ### How to Use Transcriptor
-            
-        1. **Upload** an audio file (MP3, WAV, M4A)
-        2. Select analysis options (optional)
-        3. Click **Transcribe Audio** button
-        4. View and download results
-        5. Explore different output formats
-            
-        *Note: Processing time depends on audio length*
+        ### 📖 Quick Guide
+        
+        **2 Simple Steps:**
+        
+        **Step 1: Upload Audio**
+        - Upload MP3, WAV, or M4A file
+        - Click "Use this file for transcription"
+        
+        **Step 2: Transcribe**
+        - Click **TRANSCRIBE AUDIO**
+        - Download your results
+        
+        **Features:**
+        - 🎯 Whisper AI transcription
+        - 🌍 15+ languages detected
+        - 👥 Speaker detection
+        - 🎵 Gender voice analysis
+        - 📊 Audio visualizations
+        - 🔑 Keyword extraction
+        
+        **Supported Formats:**
+        - MP3, WAV, M4A
+        - Up to 200MB per file
+        
+        **Tips for best results:**
+        - Use clear audio with minimal background noise
+        - Ensure speech is clear and audible
+        - Longer files take more processing time
         """)
 
 if __name__ == "__main__":

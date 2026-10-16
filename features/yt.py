@@ -1,200 +1,332 @@
 import streamlit as st
-from googleapiclient.discovery import build # google api 
-from youtube_transcript_api import YouTubeTranscriptApi # youtube data api
 import os
 import re
-from gtts import gTTS
 import tempfile
-import nltk # natural language tool kit 
-from collections import Counter 
+import time
+from collections import Counter
+import nltk
+import yt_dlp
+import whisper
+import numpy as np
+
+# Download nltk data
+try:
+    nltk.data.find("tokenizers/punkt")
+except Exception:
+    nltk.download("punkt", quiet=True)
 
 def main():
-    # Apply consistent styling with main app
+    # Force text visibility
     st.markdown("""
     <style>
-        [data-testid="stAppViewContainer"] {
-            background-color: white;
-        .header {
-            font-family: 'Helvetica Neue', sans-serif;
-            font-weight: 700;
-            font-size: 2.5rem;
-            margin-bottom: 0.5rem;
-            background: linear-gradient(90deg, #3a7bd5, #00d2ff);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            display: inline-block;
+        * {
+            color: #111111 !important;
         }
-        /* Hide Streamlit default elements */
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        .stDeployButton {display:none;}
+        .stApp {
+            background-color: #ffffff !important;
+        }
+        h1, h2, h3, h4, h5, h6 {
+            color: #232f3e !important;
+        }
+        .stButton button {
+            background-color: #FFD814 !important;
+            color: #111111 !important;
+            font-weight: 500 !important;
+        }
+        .stTextArea textarea {
+            color: #111111 !important;
+            background-color: #ffffff !important;
+            border: 1px solid #ddd !important;
+        }
+        .stAlert {
+            background-color: #e7f3ff !important;
+        }
+        .stAlert p, .stAlert div {
+            color: #111111 !important;
+        }
     </style>
     """, unsafe_allow_html=True)
 
-    st.markdown('<h1 class="header">📹 YouTube Video Analyzer</h1>', unsafe_allow_html=True)
+    st.markdown('<h2 style="color: #232f3e; font-size: 1.8rem;">🎬 YouTube Audio Transcriber</h2>', unsafe_allow_html=True)
+    st.markdown('<p style="color: #555555;">Extract text by listening to video audio - no captions needed!</p>', unsafe_allow_html=True)
 
-    # YouTube API setup
-    YOUTUBE_API_KEY = 'AIzaSyCXN-YPhoilxFUiSkKag7qHxFhvrVh7EoA'  # Replace with your actual API key
-
-    # Download nltk data (first time only)
-    try:
-        nltk.data.find('tokenizers/punkt')
-    except:
-        nltk.download('punkt')
-
-    def get_video_id(url):
-        """Extracts video ID from YouTube URL"""
-        video_id = url.split('v=')[-1]
-        if '&' in video_id:
-            video_id = video_id.split('&')[0]
-        return video_id
-
-    def get_video_details(video_id):
-        """Fetch video details (title, thumbnail, duration) from YouTube API"""
-        youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
-        request = youtube.videos().list(part="snippet,contentDetails", id=video_id)
-        response = request.execute()
+    with st.expander("ℹ️ How to use", expanded=False):
+        st.markdown("""
+        **Instructions:**
+        1. Enter a YouTube video URL
+        2. Select Whisper model (tiny is fastest)
+        3. Click **Download & Transcribe**
+        4. View transcription line by line
         
-        if 'items' in response:
-            video_details = response['items'][0]['snippet']
-            content_details = response['items'][0]['contentDetails']
-            title = video_details['title']
-            thumbnail_url = video_details['thumbnails']['high']['url']
-            
-            # Parse duration (ISO 8601 format)
-            duration = content_details['duration']
-            duration_str = format_duration(duration)
-            
-            return title, thumbnail_url, duration_str
+        **How it works:**
+        - Downloads audio from YouTube video
+        - Uses Whisper AI to transcribe speech
+        - Shows output line by line with timestamps
+        
+        **Note:** 
+        - First download may take a few seconds
+        - Longer videos take more time to process
+        - Works with any YouTube video (even without captions!)
+        """)
+
+    # Model selection
+    model_options = ["tiny", "base", "small", "medium"]
+    selected_model = st.selectbox(
+        "Whisper Model (tiny = fastest, medium = most accurate)",
+        model_options,
+        index=0,
+        help="Tiny is recommended for quick results"
+    )
+
+    @st.cache_resource
+    def load_whisper_model(model_size):
+        """Load Whisper model"""
+        return whisper.load_model(model_size)
+
+    # Load model
+    with st.spinner(f"Loading {selected_model} model... First time may take a moment"):
+        model = load_whisper_model(selected_model)
+
+    # URL input
+    video_url = st.text_input(
+        "YouTube URL",
+        placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        key="youtube_url_input"
+    )
+
+    # Progress indicators
+    download_status = st.empty()
+    transcribe_status = st.empty()
+
+    def download_audio(youtube_url, output_path):
+        """Download audio from YouTube video"""
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'outtmpl': os.path.join(output_path, '%(title)s.%(ext)s'),
+            'quiet': True,
+            'no_warnings': True,
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=True)
+            title = info.get('title', 'audio')
+            duration = info.get('duration', 0)
+            audio_file = os.path.join(output_path, f"{title}.mp3")
+            return audio_file, title, duration
+
+    def transcribe_audio_file(audio_path, model, progress_callback=None):
+        """Transcribe audio file line by line"""
+        result = model.transcribe(audio_path)
+        
+        # Format output line by line
+        segments = []
+        for segment in result["segments"]:
+            start_time = format_time(segment["start"])
+            end_time = format_time(segment["end"])
+            text = segment["text"].strip()
+            segments.append({
+                "start": start_time,
+                "end": end_time,
+                "text": text,
+                "start_seconds": segment["start"],
+                "end_seconds": segment["end"]
+            })
+        
+        return segments, result["text"], result["language"]
+
+    def format_time(seconds):
+        """Format seconds to HH:MM:SS or MM:SS"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
         else:
-            return None, None, None
+            return f"{minutes:02d}:{secs:02d}"
 
-    def format_duration(iso_duration):
-        """Convert ISO 8601 duration to human-readable format"""
-        pattern = re.compile(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?')
-        match = pattern.match(iso_duration)
-        if not match:
-            return "Unknown duration"
-        
-        hours, minutes, seconds = match.groups()
-        parts = []
-        if hours:
-            parts.append(f"{hours}h")
-        if minutes:
-            parts.append(f"{minutes}m")
-        if seconds:
-            parts.append(f"{seconds}s")
-        
-        return ' '.join(parts) if parts else "0s"
+    # Language mapping
+    lang_map = {
+        "en": "English", "hi": "Hindi", "fr": "French", "de": "German",
+        "es": "Spanish", "it": "Italian", "zh": "Chinese", "ja": "Japanese",
+        "ko": "Korean", "ar": "Arabic", "ru": "Russian", "te": "Telugu",
+        "ta": "Tamil", "bn": "Bengali", "pa": "Punjabi", "gu": "Gujarati"
+    }
 
-    def get_video_transcript(video_id):
-        """Fetch transcript using youtube_transcript_api"""
-        try:
-            transcript = YouTubeTranscriptApi.get_transcript(video_id)
-            # Formatting the transcript for display
-            transcript_text = "\n".join([f"{entry['start']}s - {entry['start'] + entry['duration']}s: {entry['text']}" for entry in transcript])
-            full_text = " ".join([entry['text'] for entry in transcript])
-            return transcript, transcript_text, full_text
-        except Exception as e:
-            return None, f"Error: {str(e)}", None
+    # Analyze button
+    if st.button("🎤 Download & Transcribe", type="primary", use_container_width=True):
+        if not video_url:
+            st.warning("⚠️ Please enter a YouTube URL")
+            return
 
-    def sanitize_filename(title):
-        """Sanitize the video title to make it a valid filename."""
-        return re.sub(r'[<>:"/\\|?*]', '_', title)
-
-    def create_audio_summary(summary_text):
-        """Convert summary text to audio and return the file path."""
-        tts = gTTS(summary_text, lang='en')
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_audio:
-            tts.save(temp_audio.name)
-            return temp_audio.name
-
-    def remove_emojis(text):
-        """Remove emojis from the text using regex"""
-        emoji_pattern = re.compile("[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F700-\U0001F77F\U0001F780-\U0001F7FF\U0001F800-\U0001F8FF\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U00002702-\U000027B0\U0001F004-\U0001F0CF\U00002B06-\U00002B07\U000025AA-\U000025AB\U0001F004-\U0001F0CF\U0001F1E6-\U0001F1FF\U00002B50]+", flags=re.UNICODE)
-        return emoji_pattern.sub(r'', text)
-
-    def analyze_sentiment(text):
-        """Simple sentiment analysis of the transcript"""
-        if not text:
-            return "Neutral"
-        
-        positive_words = {'good', 'great', 'excellent', 'amazing', 'wonderful', 'happy', 'love'}
-        negative_words = {'bad', 'terrible', 'awful', 'horrible', 'worst', 'sad', 'hate'}
-        
-        words = [word.lower() for word in nltk.word_tokenize(text) if word.isalpha()]
-        word_counts = Counter(words)
-        
-        positive_score = sum(word_counts[word] for word in positive_words)
-        negative_score = sum(word_counts[word] for word in negative_words)
-        
-        if positive_score > negative_score:
-            return "Positive"
-        elif negative_score > positive_score:
-            return "Negative"
-        else:
-            return "Neutral"
-
-    # Main UI
-    video_url = st.text_input("Enter YouTube Video URL", placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-
-    if video_url:
-        video_id = get_video_id(video_url)
-        
-        # Get video details (title, thumbnail, duration)
-        title, thumbnail_url, duration = get_video_details(video_id)
-        if title and thumbnail_url:
-            st.subheader("🎥 Video Details")
-            title_cleaned = remove_emojis(title)
-            st.write(f"**Title**: {title_cleaned}")
-            st.image(thumbnail_url, caption=f"Duration: {duration}", use_container_width =True)
-            
-            # Get transcript of the video
-            transcript, transcript_text, full_text = get_video_transcript(video_id)
-            if "Error" in transcript_text:
-                st.error("Could not fetch transcript: " + transcript_text)
-            else:
-                # Collapsible transcript section
-                with st.expander("📝 View Full Transcript"):
-                    st.text(transcript_text)
+        # Create temp directory
+        with tempfile.TemporaryDirectory() as temp_dir:
+            try:
+                # Step 1: Download audio
+                download_status.info("📥 Downloading audio from YouTube... This may take a moment")
                 
-                # Sentiment analysis
-                if full_text:
-                    sentiment = analyze_sentiment(full_text)
-                    st.subheader("Sentiment Analysis")
-                    st.write(f"The overall sentiment of the video is: **{sentiment}**")
-            
-            # Video Summary
-            st.subheader("📄 Video Summary")
-            st.write(f"Summary: The video is about {title_cleaned}")
-            
-            # Audio Summary
-            audio_file_path = create_audio_summary(f"The video is about {title_cleaned}")
-            st.audio(audio_file_path, format='audio/mp3', start_time=0)
-            
-            # Download Transcript Button
-            st.subheader("📥 Download Transcript")
-            if transcript_text != "Error":
-                sanitized_title = sanitize_filename(title)
-                transcript_file = f"{sanitized_title}_transcript.txt"
-                try:
-                    with open(transcript_file, "w", encoding="utf-8") as file:
-                        file.write(transcript_text)
-                    
-                    with open(transcript_file, "r", encoding="utf-8") as file:
-                        st.download_button(
-                            label="Download Transcript",
-                            data=file,
-                            file_name=transcript_file,
-                            mime="text/plain"
-                        )
-                    
-                    os.remove(transcript_file)
-                except Exception as e:
-                    st.error(f"Error in file handling: {str(e)}")
+                audio_file, video_title, duration = download_audio(video_url, temp_dir)
+                
+                if not os.path.exists(audio_file):
+                    st.error("Failed to download audio")
+                    return
+                
+                # Format duration
+                dur_min = duration // 60
+                dur_sec = duration % 60
+                download_status.success(f"✅ Audio downloaded! Duration: {dur_min}m {dur_sec}s | Title: {video_title[:50]}...")
+                
+                # Step 2: Transcribe
+                transcribe_status.info("🎙️ Transcribing audio with Whisper AI... This may take a moment")
+                
+                segments, full_text, detected_lang = transcribe_audio_file(audio_file, model)
+                
+                lang_name = lang_map.get(detected_lang, detected_lang)
+                transcribe_status.success(f"✅ Transcription complete! Detected language: {lang_name}")
+                
+                # Display video info
+                st.subheader("📹 Video Information")
+                col1, col2 = st.columns(2)
+                with col1:
+                    thumbnail_url = f"https://img.youtube.com/vi/{extract_video_id(video_url)}/mqdefault.jpg"
+                    st.image(thumbnail_url, use_container_width=True)
+                with col2:
+                    st.markdown(f"**Title:** {video_title}")
+                    st.markdown(f"**Duration:** {dur_min}m {dur_sec}s")
+                    st.markdown(f"**Detected Language:** {lang_name}")
+                    st.markdown(f"**Segments:** {len(segments)}")
+                    st.markdown(f"**Total Words:** {len(full_text.split())}")
+                
+                # Display transcription line by line
+                st.subheader("📝 Transcription (Line by Line)")
+                
+                # Create a container for line-by-line display
+                transcript_container = st.container()
+                
+                with transcript_container:
+                    for i, segment in enumerate(segments):
+                        # Create a visual separator for each line
+                        st.markdown(f"""
+                        <div style="
+                            background-color: #f8f9fa;
+                            padding: 8px 12px;
+                            margin: 5px 0;
+                            border-radius: 5px;
+                            border-left: 3px solid #FFD814;
+                        ">
+                            <span style="font-family: monospace; color: #666; font-size: 0.8rem;">[{segment['start']} - {segment['end']}]</span>
+                            <span style="color: #111; font-size: 1rem;"> {segment['text']}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                
+                # Also provide a text area for copying
+                with st.expander("📋 View as plain text"):
+                    plain_text = "\n".join([f"[{s['start']} - {s['end']}] {s['text']}" for s in segments])
+                    st.text_area("Full Transcript", plain_text, height=300)
+                
+                # Word statistics
+                with st.expander("📊 Word Statistics"):
+                    words = [word.lower() for word in nltk.word_tokenize(full_text) if word.isalpha() and len(word) > 3]
+                    if words:
+                        common_words = Counter(words).most_common(15)
+                        st.write("**Most common words:**")
+                        for word, count in common_words:
+                            st.write(f"• **{word}** : {count} times")
+                
+                # Download options
+                st.subheader("📥 Download Options")
+                
+                col_d1, col_d2, col_d3 = st.columns(3)
+                
+                with col_d1:
+                    # Download full transcript as TXT
+                    transcript_txt = "\n".join([f"[{s['start']} - {s['end']}] {s['text']}" for s in segments])
+                    st.download_button(
+                        label="📄 Download Transcript (TXT)",
+                        data=transcript_txt.encode("utf-8"),
+                        file_name=f"{sanitize_filename(video_title)}_transcript.txt",
+                        mime="text/plain",
+                        use_container_width=True
+                    )
+                
+                with col_d2:
+                    # Download as SRT (subtitle format)
+                    srt_content = generate_srt(segments)
+                    st.download_button(
+                        label="🎬 Download as SRT",
+                        data=srt_content.encode("utf-8"),
+                        file_name=f"{sanitize_filename(video_title)}.srt",
+                        mime="text/plain",
+                        use_container_width=True
+                    )
+                
+                with col_d3:
+                    # Download plain text (no timestamps)
+                    st.download_button(
+                        label="📝 Download Plain Text",
+                        data=full_text.encode("utf-8"),
+                        file_name=f"{sanitize_filename(video_title)}_text.txt",
+                        mime="text/plain",
+                        use_container_width=True
+                    )
+                
+                # Cleanup
+                download_status.empty()
+                transcribe_status.empty()
+                
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+                st.info("Please make sure the URL is valid and you have ffmpeg installed")
+                download_status.empty()
+                transcribe_status.empty()
 
-    else:
-        st.info("Please enter a valid YouTube video URL.")
+def extract_video_id(url):
+    """Extract video ID from YouTube URL"""
+    patterns = [
+        r'v=([a-zA-Z0-9_-]{11})',
+        r'youtu\.be/([a-zA-Z0-9_-]{11})',
+        r'shorts/([a-zA-Z0-9_-]{11})'
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return ""
+
+def sanitize_filename(filename):
+    """Sanitize filename"""
+    return re.sub(r'[<>:"/\\|?*]', '_', filename)[:50]
+
+def generate_srt(segments):
+    """Generate SRT subtitle format"""
+    srt_content = ""
+    for i, seg in enumerate(segments, 1):
+        # Convert to SRT time format (HH:MM:SS,mmm)
+        start_seconds = seg.get("start_seconds", 0)
+        end_seconds = seg.get("end_seconds", 0)
+        
+        start_srt = format_srt_time(start_seconds)
+        end_srt = format_srt_time(end_seconds)
+        
+        srt_content += f"{i}\n"
+        srt_content += f"{start_srt} --> {end_srt}\n"
+        srt_content += f"{seg['text']}\n\n"
+    
+    return srt_content
+
+def format_srt_time(seconds):
+    """Format seconds to SRT time format (HH:MM:SS,mmm)"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int((seconds % 1) * 1000)
+    
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 if __name__ == "__main__":
     main()

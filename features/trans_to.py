@@ -2,65 +2,167 @@ import streamlit as st
 import time
 import os
 import tempfile
-from googletrans import Translator #google free api to traslate to multiple languages ttos
+from googletrans import Translator
 from io import BytesIO
-import speech_recognition as sr
-from gtts import gTTS # google text to speech
+from gtts import gTTS
+from streamlit_mic_recorder import mic_recorder
+
 
 def main():
-    # Apply your app's styling with white background
+    # Force ALL text to be visible with high-priority CSS
     st.markdown("""
     <style>
-        /* Main styling with white background */
-        [data-testid="stAppViewContainer"] {
-            background-color: white;
+        /* Force ALL elements to have dark text */
+        * {
+            color: #111111 !important;
         }
-        .header {
-            font-family: 'Helvetica Neue', sans-serif;
-            font-weight: 700;
-            font-size: 2.5rem;
-            margin-bottom: 0.5rem;
-            color: #3a7bd5;
-            display: inline-block;
+        
+        .stApp {
+            background-color: #ffffff !important;
         }
-        .feature-card {
-            padding: 15px;
-            border-radius: 10px;
-            background-color: white;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            margin-bottom: 15px;
-            border: 1px solid #e0e0e0;
+        
+        /* Headers */
+        h1, h2, h3, h4, h5, h6, .st-emotion-cache-1v0mbdj h1 {
+            color: #232f3e !important;
         }
-        /* Hide Streamlit default elements */
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        .stDeployButton {display:none;}
-        /* How to use section styling */
-        .how-to-use {
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 20px;
+        
+        /* Selectbox - CRITICAL for language visibility */
+        .stSelectbox label, 
+        .stSelectbox div, 
+        .stSelectbox span,
+        .stSelectbox [data-baseweb="select"] span,
+        .stSelectbox [data-baseweb="select"] div,
+        .st-emotion-cache-1y4p8pa,
+        .st-emotion-cache-1whautp {
+            color: #111111 !important;
+            background-color: #ffffff !important;
+        }
+        
+        /* Selectbox dropdown options */
+        div[role="listbox"] div,
+        div[role="option"],
+        .st-emotion-cache-1n76uvr {
+            color: #111111 !important;
+            background-color: #ffffff !important;
+        }
+        
+        /* Selectbox input field */
+        .st-emotion-cache-1y4p8pa input,
+        .st-emotion-cache-1y4p8pa {
+            color: #111111 !important;
+            background-color: #ffffff !important;
+            border: 1px solid #ddd !important;
+        }
+        
+        /* Text area */
+        .stTextArea textarea {
+            color: #111111 !important;
+            background-color: #ffffff !important;
+            border: 1px solid #ddd !important;
+        }
+        
+        /* Text input */
+        .stTextInput input {
+            color: #111111 !important;
+            background-color: #ffffff !important;
+            border: 1px solid #ddd !important;
+        }
+        
+        /* Buttons */
+        .stButton button {
+            background-color: #FFD814 !important;
+            color: #111111 !important;
+            font-weight: 500 !important;
+            border: none !important;
+        }
+        
+        .stButton button:hover {
+            background-color: #F7CA00 !important;
+            color: #111111 !important;
+        }
+        
+        /* Tabs */
+        .stTabs [data-baseweb="tab-list"] button {
+            color: #111111 !important;
+        }
+        
+        .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+            color: #111111 !important;
+        }
+        
+        /* Expander */
+        .streamlit-expanderHeader {
+            color: #111111 !important;
+            background-color: #f0f0f0 !important;
+        }
+        
+        .streamlit-expanderContent {
+            color: #111111 !important;
+        }
+        
+        /* Alert/Success/Info/Warning messages */
+        .stAlert {
+            background-color: #e7f3ff !important;
+        }
+        
+        .stAlert p, .stAlert div, .stAlert span {
+            color: #111111 !important;
+        }
+        
+        .stAlert[data-baseweb="notification"]:has(.stAlertIconSuccess) {
+            background-color: #d4edda !important;
+        }
+        
+        /* Metric cards */
+        .stMetric label, .stMetric div {
+            color: #111111 !important;
+        }
+        
+        /* Download button */
+        .stDownloadButton button {
+            background-color: #FFD814 !important;
+            color: #111111 !important;
+        }
+        
+        /* Radio buttons */
+        .stRadio label, .stRadio span {
+            color: #111111 !important;
+        }
+        
+        /* Checkbox */
+        .stCheckbox label, .stCheckbox span {
+            color: #111111 !important;
+        }
+        
+        /* Audio player */
+        .stAudio {
+            color: #111111;
+        }
+        
+        /* Code blocks */
+        code, pre {
+            color: #111111 !important;
+            background-color: #f5f5f5 !important;
         }
     </style>
     """, unsafe_allow_html=True)
 
-    st.markdown('<h1 class="header">🌐 Voice Vision Translator</h1>', unsafe_allow_html=True)
-    st.markdown("Translate Text and Voice between multiple languages with ease")
+    st.markdown('<h1 style="color: #232f3e; font-size: 2rem;">🌐 Voice Vision Translator</h1>', unsafe_allow_html=True)
+    st.markdown('<p style="color: #555555; margin-bottom: 20px;">Translate Text and Voice between multiple languages with ease</p>', unsafe_allow_html=True)
 
-    # Add "How to Use" section
+    # How to use section
     with st.expander("📌 How to Use This Translator", expanded=False):
         st.markdown("""
         **1. Text Translation:**
-        - Select source and target languages
-        - Type or paste your text
+        - Select source and target languages from dropdowns
+        - Type or paste your text in the text area
         - Click 'Translate Text' button
         
         **2. Voice Translation:**
         - Select your speaking language
-        - Click 'Start' to begin recording
+        - Click the microphone button to record
         - Speak clearly into your microphone
-        - Click 'Stop' when finished
+        - Click stop when finished
         - Select target language and click 'Translate Voice Input'
         
         **3. History:**
@@ -72,41 +174,21 @@ def main():
     # Initialize translator
     translator = Translator()
 
-    # Language code to name mapping
+    # Language mapping
     lang_map = {
         "en": "English", "hi": "Hindi", "fr": "French", "de": "German",
-        "es": "Spanish", "it": "Italian", "zh-cn": "Chinese", "ja": "Japanese",
+        "es": "Spanish", "it": "Italian", "zh-cn": "Chinese (Simplified)", "ja": "Japanese",
         "ko": "Korean", "ar": "Arabic", "ru": "Russian", "te": "Telugu",
         "ta": "Tamil", "bn": "Bengali", "pa": "Punjabi", "gu": "Gujarati", "kn": "Kannada"
     }
     lang_codes = {v: k for k, v in lang_map.items()}
 
-    #session state variaable
-    # Initialize session state for history
+    # Session state
     if 'translation_history' not in st.session_state:
         st.session_state.translation_history = []
-
-    # Initialize session states for audio playback
-    if 'should_play_audio' not in st.session_state:
-        st.session_state.should_play_audio = False
-    if 'audio_text' not in st.session_state:
-        st.session_state.audio_text = ""
-    if 'audio_lang' not in st.session_state:
-        st.session_state.audio_lang = "en"
-
-    # Initialize session states for recording control
-    if 'is_recording' not in st.session_state:
-        st.session_state.is_recording = False
-    if 'recording_complete' not in st.session_state:
-        st.session_state.recording_complete = False
     if 'voice_text' not in st.session_state:
         st.session_state.voice_text = ""
-    if 'manual_stop' not in st.session_state:
-        st.session_state.manual_stop = False
-    if 'recording_data' not in st.session_state:
-        st.session_state.recording_data = None
 
-    # Function to add entry to translation history
     def add_to_history(source_text, source_lang, translated_text, target_lang):
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
         st.session_state.translation_history.append({
@@ -117,56 +199,60 @@ def main():
             "translated_text": translated_text
         })
 
-    # Function to create a download link for text
     def get_text_download_link(text, filename="translation.txt"):
         b = BytesIO()
         b.write(text.encode())
         b.seek(0)
         return st.download_button("📥 Download Translation", b, file_name=filename)
 
-    # Function to play audio without affecting translated text display
     def play_audio(text, lang_code):
         try:
             if not text:
-                st.warning("No text available to play")
                 return None
-                
-            tts = gTTS(text=text, lang=lang_code)
-            
-            # Use a consistent path to avoid regenerating files when not needed
-            audio_path = os.path.join(tempfile.gettempdir(), f"voice_vision_audio_{lang_code}.mp3")
+            tts = gTTS(text=text, lang=lang_code, slow=False)
+            audio_path = os.path.join(tempfile.gettempdir(), f"voice_vision_audio_{hash(text)}_{lang_code}.mp3")
             tts.save(audio_path)
-            
-            # Return the audio bytes
             with open(audio_path, "rb") as audio_file:
-                return audio_file.read()
-                
+                audio_data = audio_file.read()
+            os.unlink(audio_path)
+            return audio_data
         except Exception as e:
-            st.error(f"Error generating audio: {e}")
             return None
 
-    # Create tabs for different input methods
+    # Create tabs
     tab1, tab2, tab3 = st.tabs(["💬 Text Input", "🎤 Microphone Input", "📚 History"])
 
     with tab1:
-        st.header("Text Translation")
+        st.markdown("### Text Translation")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("Source")
-            source_lang = st.selectbox("Select source language", list(lang_map.values()), index=0, key="text_source_lang")
-            input_text = st.text_area("Enter text to translate", height=150)
+            st.markdown("**Source Language**")
+            source_lang = st.selectbox(
+                "Select source language", 
+                list(lang_map.values()), 
+                index=0, 
+                key="text_source_lang",
+                label_visibility="collapsed"
+            )
+            input_text = st.text_area(
+                "Enter text to translate", 
+                height=150, 
+                placeholder="Type or paste your text here...",
+                key="input_text_area"
+            )
         
         with col2:
-            st.subheader("Translation")
-            target_lang = st.selectbox("Select target language", list(lang_map.values()), index=1, key="text_target_lang")
+            st.markdown("**Target Language**")
+            target_lang = st.selectbox(
+                "Select target language", 
+                list(lang_map.values()), 
+                index=1, 
+                key="text_target_lang",
+                label_visibility="collapsed"
+            )
             
-            # Quick language swap button
-            if st.button("🔄 Swap Languages", key="text_swap"):
-                source_lang, target_lang = target_lang, source_lang
-                st.experimental_rerun()
-                
             translation_container = st.container()
             
             if st.button("🌐 Translate Text", key="text_translate", use_container_width=True) and input_text:
@@ -179,210 +265,158 @@ def main():
                         )
                         translated_text = result.text
                         
-                        # Display translated text
                         with translation_container:
                             st.success("✅ Translation Complete!")
-                            st.session_state.last_translated_text = translated_text
-                            st.session_state.last_translated_lang = lang_codes[target_lang]
                             st.text_area("Translated Text", translated_text, height=150, key="text_translation_result")
                             
-                            # Provide download option
-                            get_text_download_link(translated_text, f"translation_{target_lang}.txt")
-                            
-                            # Add text-to-speech option
-                            audio_bytes = play_audio(translated_text, lang_codes[target_lang])
-                            if audio_bytes:
-                                st.audio(audio_bytes, format="audio/mp3")
+                            col_download, col_audio = st.columns(2)
+                            with col_download:
+                                get_text_download_link(translated_text, f"translation_{target_lang}.txt")
+                            with col_audio:
+                                audio_bytes = play_audio(translated_text, lang_codes[target_lang])
+                                if audio_bytes:
+                                    st.audio(audio_bytes, format="audio/mp3")
                         
-                        # Add to translation history
                         add_to_history(input_text, source_lang, translated_text, target_lang)
                 
                 except Exception as e:
                     st.error(f"Translation Error: {e}")
 
     with tab2:
-     
-        
-        # Functions to control recording state
-        def start_recording_session():
-            st.session_state.is_recording = True
-            st.session_state.recording_complete = False
-            st.session_state.manual_stop = False
-            
-        def stop_recording_session():
-            st.session_state.is_recording = False
-            st.session_state.recording_complete = True
-            st.session_state.manual_stop = True
-        
-        def pause_recording_session():
-            st.session_state.is_recording = False
-        
-        def resume_recording_session():
-            st.session_state.is_recording = True
+        st.markdown("### Voice Translation")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("Voice Input")
-            mic_source_lang = st.selectbox("Select your speaking language", list(lang_map.values()), index=0, key="mic_source_lang")
+            st.markdown("**Speaking Language**")
+            mic_source_lang = st.selectbox(
+                "Select your speaking language", 
+                list(lang_map.values()), 
+                index=0, 
+                key="mic_source_lang",
+                label_visibility="collapsed"
+            )
             
-            # Voice recording control buttons
-            col_rec1, col_rec2, col_rec3 = st.columns(3)
-            with col_rec1:
-                start_button = st.button("🎤 Start", key="start_recording", 
-                                        on_click=start_recording_session, 
-                                        disabled=st.session_state.is_recording)
-            with col_rec2:
-                pause_button = st.button("⏸️ Pause", key="pause_recording", 
-                                       on_click=pause_recording_session,
-                                       disabled=not st.session_state.is_recording)
-            with col_rec3:
-                stop_button = st.button("⏹️ Stop", key="stop_recording", 
-                                       on_click=stop_recording_session,
-                                       disabled=not st.session_state.is_recording and not st.session_state.recording_complete)
+            st.markdown("**Record your voice:**")
+            st.caption("Click the microphone button below, speak clearly, then click stop")
             
-            # Recording status indicator
-            recording_status = st.empty()
-            if st.session_state.is_recording:
-                recording_status.markdown("#### 🔴 Recording in progress...")
-                recording_status.markdown("Speak clearly and press 'Stop' when finished.")
-            elif hasattr(st.session_state, 'recording_paused') and st.session_state.recording_paused:
-                recording_status.markdown("#### ⏸️ Recording paused")
-                recording_status.markdown("Press 'Resume' to continue or 'Stop' to finish.")
+            audio = mic_recorder(
+                start_prompt="🎤 Start Recording",
+                stop_prompt="⏹️ Stop Recording",
+                just_once=True,
+                use_container_width=True,
+                format="wav",
+                key="voice_recorder"
+            )
             
-            # Simplified recording settings
-            st.markdown("### Recording Settings")
-            auto_complete = st.checkbox("Enable auto-completion", value=False,
-                                       help="When enabled, recording will stop after detecting silence")
+            if audio:
+                st.audio(audio['bytes'], format="audio/wav")
+                st.success(f"✅ Recording saved! Duration: {audio.get('duration', 0):.1f} seconds")
+                
+                with st.spinner("Converting speech to text..."):
+                    try:
+                        import speech_recognition as sr
+                        
+                        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                            temp_path = temp_file.name
+                            temp_file.write(audio['bytes'])
+                        
+                        recognizer = sr.Recognizer()
+                        with sr.AudioFile(temp_path) as source:
+                            recognizer.adjust_for_ambient_noise(source)
+                            audio_data = recognizer.record(source)
+                            
+                            try:
+                                voice_text = recognizer.recognize_google(
+                                    audio_data, 
+                                    language=lang_codes[mic_source_lang]
+                                )
+                                st.session_state.voice_text = voice_text
+                                st.success(f"🎤 Recognized: {voice_text}")
+                            except sr.UnknownValueError:
+                                st.error("Could not understand the audio. Please speak clearly and try again.")
+                            except sr.RequestError as e:
+                                st.error(f"Speech recognition service error: {e}")
+                        
+                        os.unlink(temp_path)
+                        
+                    except Exception as e:
+                        st.error(f"Error processing audio: {e}")
+                        st.info("Make sure you have SpeechRecognition installed: pip install SpeechRecognition")
             
-            if auto_complete:
-                recording_timeout = st.slider("Silence Timeout (seconds)", min_value=2, max_value=30, value=5, 
-                                            help="Time of silence before auto-stopping")
-            else:
-                recording_timeout = 30
-            
-            # Placeholder for transcribed text
-            transcribed_text = st.empty()
+            if st.session_state.voice_text:
+                st.markdown("**Transcribed Text:**")
+                st.text_area("Recognized Speech", st.session_state.voice_text, height=80, key="transcribed_text", disabled=True)
         
         with col2:
-            st.subheader("Translation")
-            mic_target_lang = st.selectbox("Translate to", list(lang_map.values()), index=1, key="mic_target_lang")
+            st.markdown("**Target Language**")
+            mic_target_lang = st.selectbox(
+                "Translate to", 
+                list(lang_map.values()), 
+                index=1, 
+                key="mic_target_lang",
+                label_visibility="collapsed"
+            )
             
-            # Container for translation output
             voice_translation_container = st.container()
             
-            translate_button = st.button("🌐 Translate Voice Input", key="translate_voice", 
-                                       disabled=not st.session_state.recording_complete,
-                                       use_container_width=True)
-        
-        # Handle active recording    
-        if st.session_state.is_recording:
-            # Initialize recognizer
-            r = sr.Recognizer()
+            translate_button = st.button("🌐 Translate Voice Input", key="translate_voice", use_container_width=True)
             
-            try:
-                with st.spinner("Listening... Speak now"):
-                    # Use microphone as source
-                    with sr.Microphone() as source:
-                        r.energy_threshold = 1000
-                        r.adjust_for_ambient_noise(source, duration=0.5)
-                        r.pause_threshold = 0.8
-                        
-                        if not auto_complete:
-                            recording_timeout = 60
-                            
-                        audio = r.listen(source, timeout=recording_timeout if auto_complete else None, 
-                                       phrase_time_limit=recording_timeout * 2)
-                        
-                        st.session_state.recording_data = audio
-                        
-                st.success("Audio captured! Click 'Translate Voice Input' to process.")
-                st.session_state.recording_complete = True
-                st.session_state.is_recording = False
-                    
-            except sr.UnknownValueError:
-                st.error("Could not understand audio")
-                st.session_state.is_recording = False
-            except sr.RequestError as e:
-                st.error(f"Could not request results from Google Speech Recognition service; {e}")
-                st.session_state.is_recording = False
-            except Exception as e:
-                st.error(f"Error recording: {e}")
-                st.session_state.is_recording = False
-        
-        # Handle translation when button is clicked
-        if translate_button and st.session_state.recording_complete and hasattr(st.session_state, 'recording_data'):
-            try:
-                r = sr.Recognizer()
-                
-                with st.spinner("Processing speech..."):
-                    voice_text = r.recognize_google(st.session_state.recording_data, 
-                                                  language=lang_codes[mic_source_lang])
-                    
-                    st.session_state.voice_text = voice_text
-                    
-                    transcribed_text.text_area("Transcribed Text", voice_text, height=100)
-                    
-                    # Translate the transcribed text
+            if translate_button and st.session_state.voice_text:
+                try:
                     with st.spinner("Translating..."):
                         result = translator.translate(
-                            voice_text,
+                            st.session_state.voice_text,
                             src=lang_codes[mic_source_lang],
-                            dest=lang_codes[mic_target_lang]
+                            dest=lang_codes[mic_target_lang],
                         )
                         voice_translated_text = result.text
                         
-                        st.session_state.voice_translated_text = voice_translated_text
-                        st.session_state.voice_translated_lang = lang_codes[mic_target_lang]
-                        
                         with voice_translation_container:
-                            st.text_area("Translation", voice_translated_text, height=100, key="voice_translation_result")
+                            st.success("✅ Translation Complete!")
+                            st.text_area("Translated Text", voice_translated_text, height=100, key="voice_translation_result")
                             
-                            add_to_history(voice_text, mic_source_lang, voice_translated_text, mic_target_lang)
-                            
-                            audio_bytes = play_audio(voice_translated_text, lang_codes[mic_target_lang])
-                            if audio_bytes:
-                                st.audio(audio_bytes, format="audio/mp3")
-                    
-            except sr.UnknownValueError:
-                st.error("Could not understand audio. Please try recording again.")
-            except sr.RequestError as e:
-                st.error(f"Could not request results from Google Speech Recognition service; {e}")
-            except Exception as e:
-                st.error(f"Error: {e}")
+                            col_download, col_audio = st.columns(2)
+                            with col_download:
+                                get_text_download_link(voice_translated_text, f"voice_translation_{mic_target_lang}.txt")
+                            with col_audio:
+                                audio_bytes = play_audio(voice_translated_text, lang_codes[mic_target_lang])
+                                if audio_bytes:
+                                    st.audio(audio_bytes, format="audio/mp3")
+                        
+                        add_to_history(st.session_state.voice_text, mic_source_lang, voice_translated_text, mic_target_lang)
+                        
+                except Exception as e:
+                    st.error(f"Translation Error: {e}")
+            
+            elif translate_button and not st.session_state.voice_text:
+                st.warning("Please record and transcribe audio first using the microphone button above.")
 
     with tab3:
-        st.header("Translation History")
+        st.markdown("### Translation History")
         
         if len(st.session_state.translation_history) > 0:
-            history = sorted(
-                st.session_state.translation_history, 
-                key=lambda x: x.get("timestamp", ""), 
-                reverse=True
-            )
-            
-            for i, entry in enumerate(history):
+            for i, entry in enumerate(reversed(st.session_state.translation_history)):
                 timestamp = entry.get("timestamp", "Unknown time")
                 with st.expander(f"{entry['source_language']} → {entry['target_language']} ({timestamp})"):
                     col1, col2 = st.columns(2)
                     
                     with col1:
                         st.markdown(f"**Source ({entry['source_language']}):**")
-                        st.text_area(f"Source Text {i}", entry['source_text'], height=100, key=f"src_{i}")
+                        st.text_area(f"Source Text {i}", entry['source_text'], height=80, key=f"src_{i}")
                     
                     with col2:
                         st.markdown(f"**Translation ({entry['target_language']}):**")
-                        st.text_area(f"Translated Text {i}", entry['translated_text'], height=100, key=f"trs_{i}")
+                        st.text_area(f"Translated Text {i}", entry['translated_text'], height=80, key=f"trs_{i}")
                     
-                    if st.button(f"🔊 Play Translation", key=f"play_{i}"):
-                        audio_bytes = play_audio(entry['translated_text'], lang_codes[entry['target_language']])
-                        if audio_bytes:
-                            st.audio(audio_bytes, format="audio/mp3")
+                    audio_bytes = play_audio(entry['translated_text'], lang_codes[entry['target_language']])
+                    if audio_bytes:
+                        st.audio(audio_bytes, format="audio/mp3")
             
-            if st.button("🗑️ Clear History"):
+            if st.button("🗑️ Clear History", use_container_width=True):
                 st.session_state.translation_history = []
-                st.experimental_rerun()
-                
+                st.session_state.voice_text = ""
+                st.rerun()
         else:
             st.info("No translation history yet. Start translating to build your history!")
 
